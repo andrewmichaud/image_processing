@@ -1,6 +1,8 @@
 """Shared methods for outline and seamcarve."""
 from os import path
+from timeit import default_timer as timer
 
+import numpy
 from PIL import Image
 
 HERE = path.abspath(path.dirname(__file__))
@@ -48,15 +50,10 @@ def get_neighbors(pixels, x, y, height, width, diagonals_on=False, flatten_and_f
 
 def save_pixels(pixels):
     """Save array of pixels to an RGBA image."""
-    height = len(pixels)
-    width = len(pixels[0])
-
-    out_image = Image.new("RGBA", (width, height), BG_COLOR)
-
-    out_pixels = out_image.load()
-
-    for y in range(height):
-        for x in range(width):
-            out_pixels[(x, y)] = pixels[y][x]
-
+    print("Saving pixels to out image...")
+    start = timer()
+    array = numpy.array(pixels)
+    out_image = Image.fromarray(array)
     out_image.save("seamcarved_image.png")
+    end = timer()
+    print(f"Took {end-start} seconds.")

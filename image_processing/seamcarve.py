@@ -1,6 +1,7 @@
 """Methods for simple seam carving."""
 import collections
 import math
+from timeit import default_timer as timer
 import sys
 
 import numpy
@@ -18,7 +19,6 @@ class SeamCarveData:
         self.rel_x = x
         self.parent_choices = []
         self.parent = None
-        self.children = []
 
     def __str__(self):
         return str(self.__dict__)
@@ -26,8 +26,8 @@ class SeamCarveData:
     def __eq__(self, other):
         if isinstance(self, other.__class__):
             return (self.x == other.x and self.y == other.y)
-        else:
-            return False
+
+        return False
 
     def fix_rel_x(self):
         """Fix rel x."""
@@ -50,63 +50,58 @@ class SeamCarveData:
 
         self.energy = self.energy - old_parent_energy + new_parent_energy
 
-    def choose_children(self, energies):
-        """Pick children for updating later if we get chosen as part of a seam."""
-
-        # No children in the last row.
-        if self.y == len(energies) - 1:
-            return
-
-        # Parents only need to choose children once.
-        if len(self.children) > 0:
-            return
-
-        # Ensure we always have three children, to make later logic simpler.
-        # Left.
-        if self.x > 0:
-            self.children.append(energies[self.y+1][self.x-1])
-        else:
-            self.children.append(None)
-
-        # Middle
-        self.children.append(energies[self.y+1][self.x])
-
-        # Right.
-        if self.x < len(energies[0]) - 1:
-            self.children.append(energies[self.y+1][self.x+1])
-        else:
-            self.children.append(None)
-
-def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=True, show_energy=True):
+def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, show_energy=False):
     """Seamcarve image N times."""
-    image = Image.open(in_name).convert("L")
-    im_pixels = image.load()
+    print("Getting image open and making arrays...")
+    image = Image.open(in_name).convert("RGBA")
+    color_image = image.copy()
+    lum_image = image.copy().convert("L")
+    lum_array = numpy.asarray(lum_image)
 
-    grad_mags = get_gradient_magnitudes(image)
-    # mag_im = Image.fromarray(grad_mags).convert("RGBA")
-    # mag_im_pixels = mag_im.load()
+    total_time = 0
 
-    (energies, (min_e, max_e)) = calculate_sc_datas(image, grad_mags)
+    start = timer()
+    print("Calculating grad mags...")
+    grad_mags = get_gradient_magnitudes(lum_array)
+    end = timer()
+    total_time += end-start
+    print(f"Took {end-start} seconds ({total_time} cumulative).")
+
+    start = timer()
+    print("Calculating sc_data...")
+    (energies, (min_e, max_e)) = calculate_sc_datas(grad_mags)
+    end = timer()
+    total_time += end-start
+    print(f"Took {end-start} seconds ({total_time} cumulative).")
 
     # Create copy of out pixels we can manipulate and then save.
-    out_pixels = []
-    for y in range(image.height):
-        row = []
-        for x in range(image.width):
-            if show_energy:
-                # Compress energy into something that fits in 0-255.
-                energy = energies[y][x].energy
-                comp = int(numpy.interp(energy, [min_e, max_e], [0, 255]))
-                row.append((comp, comp, comp, 254))
-            else:
-                row.append(im_pixels[(x, y)])
+    start = timer()
+    print("Copying pixels to out array ...")
+    # TODO slow?
+    if show_energy:
+        def lum2rgba(energy):
+            return (energy, energy, energy, 254)
 
-        out_pixels.append(row)
+        out_pixels = numpy.array([[lum2rgba(sc_data.energy) for sc_data in energy_row]
+                                  for energy_row in energies])
 
+    else:
+        out_pixels = numpy.asarray(color_image).copy().reshape(image.height, image.width, 4)
+    print(numpy.shape(out_pixels))
+    print(image.height)
+    print(image.width)
+
+    end = timer()
+    total_time += end-start
+    print(f"Took {end-start} seconds ({total_time} cumulative).")
 
     # Carve!
+    start_all_carves = timer()
     count = math.floor(min(((100-percent) / 100) * image.width, image.width))
+    print(f"Starting carving ({count} carves)...")
     for i in range(count):
+        start_time = timer()
+        print(f"Starting carve {i+1}/{count}...")
 
         # Get sorted list of bottom row to get our seams.
         seam_starts = sorted(energies[-1], key=lambda sc_data: sc_data.energy)
@@ -119,28 +114,34 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=True, show
             seam.appendleft(parent)
             parent = parent.parent
 
-        # Iterate over seam twice, once to draw/remove seam and once to update energies.
-        for elem in seam:
+        # Append two dummy elements, so we can enumerate a bit farther and handle outputting,
+        # deleting elements, and updating elements, all in the same loop.
+        seam.append(None)
+        seam.append(None)
 
-            # Update out for each pixel in seam.
-            if show_carve:
-                out_pixels[elem.y][elem.x] = (255, 0, 0, 254)
-            else:
-                out_pixels[elem.y] = out_pixels[elem.y][:elem.rel_x] + \
-                        out_pixels[elem.y][elem.rel_x+1:]
+        for sindex, elem in enumerate(seam):
 
-            # Remove pixel from energies.
-            energies[elem.y] = energies[elem.y][:elem.rel_x] +\
-                    list(map(lambda x: x.fix_rel_x(), energies[elem.y][elem.rel_x+1:]))
+            # Don't try to update the dummy elements.
+            if sindex < image.height:
+                # Update out for each pixel in seam.
+                if show_carve:
+                    out_pixels[(elem.y, elem.x)] = (255, 0, 0, 254)
+                else:
+                    after = numpy.delete(out_pixels[elem.y], (elem.rel_x), axis=0)
+                    padded = numpy.vstack([after, [0, 0, 0, 0]])
+                    out_pixels[elem.y] = padded
 
-        for s, elem in enumerate(seam):
+                # Remove pixel from energies.
+                energies[elem.y] = energies[elem.y][:elem.rel_x] +\
+                        list(map(lambda x: x.fix_rel_x(), energies[elem.y][elem.rel_x+1:]))
+
             # We need to update some energies, but we don't want to have to update the entire
             # image.
             # That's slow, and it's a waste. Not every pixel is affected by this seam being
             # removed.
             # This diagram shows which pixels (spoilers - a cone).
             # x pixels need cost updated and need parents re-chosen.
-            #_ pixels just the cost update.
+            # _ pixels just the cost update.
             # At this point, we've removed all 'o's, this is just to understand the whole picture.
             #            o
             #           xox
@@ -155,9 +156,14 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=True, show
             #  _____oxx_____________
             # _____oxx_______________
 
-            # Skip first row, they don't need to be updated.
-            if s == 0:
+            # Process elements two rows ago, so we know they've been updated and their parents have
+            # been updated.
+            # Don't start updating too early.
+            if sindex < 2:
                 continue
+
+            update_index = sindex - 2
+            update_elem = seam[update_index]
 
             # Update pixels affected by this pixel deletion.
             # Slicing saves us some effort by automatically handling going past the end of the
@@ -165,15 +171,11 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=True, show
             # Have to handle going past the start ourselves.
             # We want to get the s pixels on either side of the one we deleted, keeping in mind we
             # moved everything to the right over by one already.
-            start = elem.rel_x - s
-            if start < 0:
-                start = 0
-            end = elem.rel_x + s
-
-            affected = energies[s][start:end]
+            start = max(update_elem.rel_x - update_index, 0)
+            end = update_elem.rel_x + update_index
+            affected = energies[update_index][start:end]
 
             for sc_data in affected:
-
                 # Re-choose parent options, minding edges.
                 sc_data.parent_choices = []
                 # Left.
@@ -191,25 +193,28 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=True, show
                 sc_data.choose_parent()
                 energies[sc_data.y][sc_data.rel_x] = sc_data
 
+        end_time = timer()
+        total_time += end_time-start_time
+        print(f"Took {end_time-start_time} seconds ({total_time} cumulative).")
+
+    end_all_carves = timer()
+    print(f"Took {end_all_carves-start_all_carves} seconds ({total_time} cumulative).")
+
     return out_pixels
 
-def get_gradient_magnitudes(image):
+def get_gradient_magnitudes(array):
     """Get gradient magnitude array."""
-    array = numpy.asarray(image)
-
     imx = numpy.zeros(array.shape)
     filters.sobel(array, 1, imx)
 
     imy = numpy.zeros(array.shape)
     filters.sobel(array, 0, imy)
 
-    magnitude = numpy.sqrt(imx**2 + imy**2)
-    return magnitude
+    return numpy.sqrt(imx**2 + imy**2)
 
-def calculate_sc_datas(image, grad_mags):
+def calculate_sc_datas(grad_mags):
     """Calculate grid of energies for image."""
-    width = image.width
-    height = image.height
+    (height, width) = numpy.shape(grad_mags)
 
     min_e = sys.maxsize
     max_e = 0
@@ -241,10 +246,6 @@ def calculate_sc_datas(image, grad_mags):
                 # Choose cheapest parent.
                 sc_data.choose_parent()
 
-            # Set parent for element two rows ago, who has a whole row below it to work with.
-            if y > 1:
-                energies[-2][x].choose_children(energies)
-
             # Update min, max.
             if sc_data.energy > max_e:
                 max_e = sc_data.energy
@@ -255,10 +256,5 @@ def calculate_sc_datas(image, grad_mags):
             row.append(sc_data)
 
         energies.append(row)
-
-    # Handle choosing children.
-    for y in range(height):
-        for x in range(width):
-            energies[y][x].choose_children(energies)
 
     return (energies, (min_e, max_e))
