@@ -1,4 +1,5 @@
 """Methods for simple seam carving."""
+import bisect
 import collections
 import math
 from timeit import default_timer as timer
@@ -16,7 +17,6 @@ class SeamCarveData:
         self.energy = 0
         self.x = x
         self.y = y
-        self.rel_x = x
         self.parent_choices = []
         self.parent = None
 
@@ -29,10 +29,35 @@ class SeamCarveData:
 
         return False
 
-    def fix_rel_x(self):
-        """Fix rel x."""
-        self.rel_x -= 1
-        return self
+    def __lt__(self, other):
+        if isinstance(self, other.__class__):
+            return self.x < other.x
+
+        raise TypeError
+
+    def __gt__(self, other):
+        if isinstance(self, other.__class__):
+            return self.x > other.x
+
+        raise TypeError
+
+    def __le__(self, other):
+        if isinstance(self, other.__class__):
+            return self.x <= other.x
+
+        raise TypeError
+
+    def __ge__(self, other):
+        if isinstance(self, other.__class__):
+            return self.x >= other.x
+
+        raise TypeError
+
+    def __gt__(self, other):
+        if isinstance(self, other.__class__):
+            return self.x > other.x
+
+        raise TypeError
 
     def choose_parent(self):
         """Choose parent and update my energy."""
@@ -87,9 +112,6 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
 
     else:
         out_pixels = numpy.asarray(color_image).copy().reshape(image.height, image.width, 4)
-    print(numpy.shape(out_pixels))
-    print(image.height)
-    print(image.width)
 
     end = timer()
     total_time += end-start
@@ -114,47 +136,60 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
             seam.appendleft(parent)
             parent = parent.parent
 
-        # Append two dummy elements, so we can enumerate a bit farther and handle outputting,
+        # Append dummy elements, so we can enumerate a bit farther and handle outputting,
         # deleting elements, and updating elements, all in the same loop.
-        seam.append(None)
         seam.append(None)
 
         for sindex, elem in enumerate(seam):
+            # Don't try to update the dummy element.
+            if elem is not None:
+                # Get index of elem in its row.
+                elem_row_index = bisect.bisect_left(energies[elem.y], elem)
 
-            # Don't try to update the dummy elements.
-            if sindex < image.height:
                 # Update out for each pixel in seam.
                 if show_carve:
                     out_pixels[(elem.y, elem.x)] = (255, 0, 0, 254)
                 else:
-                    after = numpy.delete(out_pixels[elem.y], (elem.rel_x), axis=0)
-                    padded = numpy.vstack([after, [0, 0, 0, 0]])
+                    after = numpy.delete(out_pixels[elem.y], (elem_row_index), axis=0)
+                    padded = numpy.concatenate((after, [[0, 0, 0, 0]]), axis=0)
                     out_pixels[elem.y] = padded
 
                 # Remove pixel from energies.
-                energies[elem.y] = energies[elem.y][:elem.rel_x] +\
-                        list(map(lambda x: x.fix_rel_x(), energies[elem.y][elem.rel_x+1:]))
+                    del energies[elem.y][elem_row_index]
 
             # We need to update some energies, but we don't want to have to update the entire
             # image.
             # That's slow, and it's a waste. Not every pixel is affected by this seam being
             # removed.
             # This diagram shows which pixels (spoilers - a cone).
-            # x pixels need cost updated and need parents re-chosen.
-            # _ pixels just the cost update.
+            # o pixels are the seam pixels
+            # _ pixels might need updates
             # At this point, we've removed all 'o's, this is just to understand the whole picture.
             #            o
-            #           xox
-            #          _oxx_
-            #         _oxx___
-            #        _oxx_____
-            #       _oxx_______
-            #      _oxx_________
-            #     _xxo___________
-            #    ___xxo___________
-            #   _____oxx___________
-            #  _____oxx_____________
-            # _____oxx_______________
+            #           _o_
+            #          _o___
+            #         _o_____
+            #        _o_______
+            #       _o_________
+            #      _o___________
+            #     ___o___________
+            #    _____o___________
+            #   _____o_____________
+            #  _____o_______________
+            # _____o_________________
+
+            #
+            #           __
+            #          ____
+            #         ______
+            #        ________
+            #       __________
+            #      ____________
+            #     ______________
+            #    ________________
+            #   __________________
+            #  ____________________
+            # ______________________
 
             # Process elements two rows ago, so we know they've been updated and their parents have
             # been updated.
@@ -162,8 +197,10 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
             if sindex < 2:
                 continue
 
-            update_index = sindex - 2
+            update_index = sindex - 1
             update_elem = seam[update_index]
+            # Get index of update_elem in its row.
+            update_elem_row_index = bisect.bisect_left(energies[update_index], update_elem)
 
             # Update pixels affected by this pixel deletion.
             # Slicing saves us some effort by automatically handling going past the end of the
@@ -171,31 +208,36 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
             # Have to handle going past the start ourselves.
             # We want to get the s pixels on either side of the one we deleted, keeping in mind we
             # moved everything to the right over by one already.
-            start = max(update_elem.rel_x - update_index, 0)
-            end = update_elem.rel_x + update_index
+            start = max(update_elem_row_index - update_index, 0)
+            end = update_elem_row_index + update_index
             affected = energies[update_index][start:end]
 
             for sc_data in affected:
+                # Get index of affected in the row.
+                affected_index = bisect.bisect_left(energies[update_index], sc_data)
+
                 # Re-choose parent options, minding edges.
                 sc_data.parent_choices = []
                 # Left.
-                if sc_data.rel_x > 0:
-                    sc_data.parent_choices.append(energies[sc_data.y-1][sc_data.rel_x-1])
+                if affected_index > 0:
+                    sc_data.parent_choices.append(energies[update_index-1][affected_index-1])
 
                 # Middle.
-                sc_data.parent_choices.append(energies[sc_data.y-1][sc_data.rel_x])
+                sc_data.parent_choices.append(energies[update_index-1][affected_index])
 
                 # Right.
-                if sc_data.rel_x < len(energies[sc_data.y-1])-1:
-                    sc_data.parent_choices.append(energies[sc_data.y-1][sc_data.rel_x+1])
+                if affected_index < len(energies[update_index]) - 1:
+                    sc_data.parent_choices.append(energies[update_index-1][affected_index+1])
 
                 # And make sure to update energies!
                 sc_data.choose_parent()
-                energies[sc_data.y][sc_data.rel_x] = sc_data
+                energies[update_index][affected_index] = sc_data
 
         end_time = timer()
         total_time += end_time-start_time
         print(f"Took {end_time-start_time} seconds ({total_time} cumulative).")
+
+    out_pixels = numpy.hsplit(out_pixels, [image.width-count, image.width-count])[0]
 
     end_all_carves = timer()
     print(f"Took {end_all_carves-start_all_carves} seconds ({total_time} cumulative).")
