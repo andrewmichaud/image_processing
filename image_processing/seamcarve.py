@@ -53,12 +53,6 @@ class SeamCarveData:
 
         raise TypeError
 
-    def __gt__(self, other):
-        if isinstance(self, other.__class__):
-            return self.x > other.x
-
-        raise TypeError
-
     def choose_parent(self):
         """Choose parent and update my energy."""
         if self.parent is None:
@@ -75,7 +69,7 @@ class SeamCarveData:
 
         self.energy = self.energy - old_parent_energy + new_parent_energy
 
-def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, show_energy=False):
+def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, show_energy=False):
     """Seamcarve image N times."""
     print("Getting image open and making arrays...")
     image = Image.open(in_name).convert("RGBA")
@@ -118,29 +112,39 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
     print(f"Took {end-start} seconds ({total_time} cumulative).")
 
     # Carve!
-    start_all_carves = timer()
     count = math.floor(min(((100-percent) / 100) * image.width, image.width))
     print(f"Starting carving ({count} carves)...")
+    start_all_carves = timer()
     for i in range(count):
-        start_time = timer()
         print(f"Starting carve {i+1}/{count}...")
 
         # Get sorted list of bottom row to get our seams.
+        print(f"Getting seam starts for carve {i+1}/{count}...")
+        s_time = timer()
         seam_starts = sorted(energies[-1], key=lambda sc_data: sc_data.energy)
         min_sc_data = seam_starts[i]
+        e_time = timer()
+        print(f"Getting seam starts took {e_time-s_time} seconds")
 
         # Get top of seam.
+        print(f"Getting seam for carve {i+1}/{count}...")
+        s_time = timer()
         seam = collections.deque([min_sc_data])
         parent = min_sc_data.parent
         while parent is not None:
             seam.appendleft(parent)
             parent = parent.parent
+        e_time = timer()
+        print(f"Getting seam took {e_time-s_time} seconds")
 
         # Append dummy elements, so we can enumerate a bit farther and handle outputting,
         # deleting elements, and updating elements, all in the same loop.
         seam.append(None)
 
+        print(f"Processing seam {i+1}/{count}...")
+        s_time = timer()
         for sindex, elem in enumerate(seam):
+
             # Don't try to update the dummy element.
             if elem is not None:
                 # Get index of elem in its row.
@@ -155,7 +159,7 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
                     out_pixels[elem.y] = padded
 
                 # Remove pixel from energies.
-                    del energies[elem.y][elem_row_index]
+                del energies[elem.y][elem_row_index]
 
             # We need to update some energies, but we don't want to have to update the entire
             # image.
@@ -178,19 +182,6 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
             #  _____o_______________
             # _____o_________________
 
-            #
-            #           __
-            #          ____
-            #         ______
-            #        ________
-            #       __________
-            #      ____________
-            #     ______________
-            #    ________________
-            #   __________________
-            #  ____________________
-            # ______________________
-
             # Process elements two rows ago, so we know they've been updated and their parents have
             # been updated.
             # Don't start updating too early.
@@ -210,11 +201,11 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
             # moved everything to the right over by one already.
             start = max(update_elem_row_index - update_index, 0)
             end = update_elem_row_index + update_index
-            affected = energies[update_index][start:end]
+            affected = energies[update_index][start:end+1]
 
-            for sc_data in affected:
+            for sc, sc_data in enumerate(affected):
                 # Get index of affected in the row.
-                affected_index = bisect.bisect_left(energies[update_index], sc_data)
+                affected_index = start + sc
 
                 # Re-choose parent options, minding edges.
                 sc_data.parent_choices = []
@@ -233,14 +224,14 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, sho
                 sc_data.choose_parent()
                 energies[update_index][affected_index] = sc_data
 
-        end_time = timer()
-        total_time += end_time-start_time
-        print(f"Took {end_time-start_time} seconds ({total_time} cumulative).")
+        e_time = timer()
+        total_time += e_time-s_time
+        print(f"Processing seam took {e_time-s_time} seconds ({total_time} cumulative).")
 
     out_pixels = numpy.hsplit(out_pixels, [image.width-count, image.width-count])[0]
 
     end_all_carves = timer()
-    print(f"Took {end_all_carves-start_all_carves} seconds ({total_time} cumulative).")
+    print(f"All carving took {end_all_carves-start_all_carves} seconds ({total_time} cumulative).")
 
     return out_pixels
 
