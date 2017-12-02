@@ -60,10 +60,9 @@ class SeamCarveData:
         else:
             old_parent_energy = self.parent.energy
 
-        new_parent_energy = self.parent_choices[0].energy
-        self.parent = self.parent_choices[0]
+        new_parent_energy = sys.maxsize
         for choice in self.parent_choices:
-            if choice.energy < new_parent_energy:
+            if choice is not None and choice.energy < new_parent_energy:
                 self.parent = choice
                 new_parent_energy = choice.energy
 
@@ -143,6 +142,8 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, sho
 
         print(f"Processing seam {i+1}/{count}...")
         s_time = timer()
+        l_index = 1
+        r_index = 1
         for sindex, elem in enumerate(seam):
 
             # Don't try to update the dummy element.
@@ -199,9 +200,18 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, sho
             # Have to handle going past the start ourselves.
             # We want to get the s pixels on either side of the one we deleted, keeping in mind we
             # moved everything to the right over by one already.
-            start = max(update_elem_row_index - update_index, 0)
-            end = update_elem_row_index + update_index
+            start = max(update_elem_row_index - l_index, 0)
+            end = update_elem_row_index + r_index
             affected = energies[update_index][start:end+1]
+
+            # See if we can skip the outside edge pixels on the next row.
+            if update_elem_row_index - l_index < 0 or\
+               affected[0].parent_choices[2] == affected[0].parent:
+                l_index += 1
+
+            if update_elem_row_index + r_index > len(energies[update_index]) - 1 or\
+               affected[-1].parent_choices[0] == affected[-1].parent:
+                r_index += 1
 
             for sc, sc_data in enumerate(affected):
                 # Get index of affected in the row.
@@ -212,6 +222,8 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, sho
                 # Left.
                 if affected_index > 0:
                     sc_data.parent_choices.append(energies[update_index-1][affected_index-1])
+                else:
+                    sc_data.parent_choices.append(None)
 
                 # Middle.
                 sc_data.parent_choices.append(energies[update_index-1][affected_index])
@@ -219,6 +231,8 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, sho
                 # Right.
                 if affected_index < len(energies[update_index]) - 1:
                     sc_data.parent_choices.append(energies[update_index-1][affected_index+1])
+                else:
+                    sc_data.parent_choices.append(None)
 
                 # And make sure to update energies!
                 sc_data.choose_parent()
@@ -226,7 +240,7 @@ def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, sho
 
         e_time = timer()
         total_time += e_time-s_time
-        print(f"Processing seam took {e_time-s_time} seconds ({total_time} cumulative).")
+        print(f"Processing seam took {e_time-s_time} seconds ({total_time} cumulative).\n")
 
     out_pixels = numpy.hsplit(out_pixels, [image.width-count, image.width-count])[0]
 
@@ -268,6 +282,8 @@ def calculate_sc_datas(grad_mags):
                 # Left.
                 if x > 0:
                     sc_data.parent_choices.append(energies[-1][x-1])
+                else:
+                    sc_data.parent_choices.append(None)
 
                 # Middle.
                 sc_data.parent_choices.append(energies[-1][x])
@@ -275,6 +291,8 @@ def calculate_sc_datas(grad_mags):
                 # Right.
                 if x < width - 1:
                     sc_data.parent_choices.append(energies[-1][x+1])
+                else:
+                    sc_data.parent_choices.append(None)
 
                 # Choose cheapest parent.
                 sc_data.choose_parent()
