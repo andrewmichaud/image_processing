@@ -68,10 +68,21 @@ class SeamCarveData:
 
         self.energy = self.energy - old_parent_energy + new_parent_energy
 
-def vertical_seamcarve(in_name=shared.IN_NAME, percent=60, show_carve=False, show_energy=False):
+def vertical_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, show_energy=False):
+    """Seamcarve vertically."""
+    image = Image.open(in_name).convert("RGBA")
+    return seamcarve(image, percent=percent, show_carve=show_carve, show_energy=show_energy)
+
+def horizontal_seamcarve(in_name=shared.IN_NAME, percent=90, show_carve=False, show_energy=False):
+    """Seamcarve horizontally."""
+    image = Image.open(in_name).convert("RGBA")
+    transposed = image.transpose(Image.TRANSPOSE)
+    result = seamcarve(transposed, percent=percent, show_carve=show_carve, show_energy=show_energy)
+    return result.transpose(1, 0, 2)
+
+def seamcarve(image, percent, show_carve, show_energy):
     """Seamcarve image N times."""
     print("Getting image open and making arrays...")
-    image = Image.open(in_name).convert("RGBA")
     color_image = image.copy()
     lum_image = image.copy().convert("L")
     lum_array = numpy.asarray(lum_image)
